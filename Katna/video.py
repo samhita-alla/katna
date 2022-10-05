@@ -23,11 +23,11 @@ from Katna.video_compressor import VideoCompressor
 import Katna.helper_functions as helper
 
 import Katna.config as config
+import multiprocessing as mp
 import subprocess
 import re
 import ffmpy
 from imageio_ffmpeg import get_ffmpeg_exe
-from multiprocessing import Pool, Process, cpu_count
 import functools
 import operator
 
@@ -47,7 +47,7 @@ class Video(object):
         self._min_video_duration = config.Video.min_video_duration
 
         # Calculating optimum number of processes for multiprocessing
-        self.n_processes = cpu_count() // 2 - 1
+        self.n_processes = mp.cpu_count() // 2 - 1
         if self.n_processes < 1:
             self.n_processes = None
 
@@ -62,6 +62,8 @@ class Video(object):
         self.temp_folder = os.path.abspath(os.path.join("clipped"))
         if not os.path.isdir(self.temp_folder):
             os.mkdir(self.temp_folder)
+
+        mp.set_start_method("spawn")
 
     def _remove_clips(self, video_clips):
         """Remove video clips from the temp directory given list of video clips
@@ -129,7 +131,7 @@ class Video(object):
         # autoflip = self.mediapipe_autoflip
 
         # generates a pool based on cores
-        pool = Pool(processes=self.n_processes)
+        pool = mp.Pool(processes=self.n_processes)
         print("This might take a while ... ")
 
         try:
@@ -138,7 +140,9 @@ class Video(object):
                 [
                     (
                         input_file_path,
-                        os.path.join(abs_dir_path_output, ntpath.basename(input_file_path)),
+                        os.path.join(
+                            abs_dir_path_output, ntpath.basename(input_file_path)
+                        ),
                         aspect_ratio,
                     )
                     for input_file_path in list_of_videos_to_process
@@ -164,7 +168,7 @@ class Video(object):
         :type file_path: [type]
         """
         # Creating the multiprocessing pool
-        self.pool_extractor = Pool(processes=self.n_processes)
+        self.pool_extractor = mp.Pool(processes=self.n_processes)
         # Split the input video into chunks. Each split(video) will be stored
         # in a temp
         if not helper._check_if_valid_video(file_path):
@@ -181,7 +185,9 @@ class Video(object):
                 frame_extractor.extract_candidate_frames, chunked_videos
             )
         # Converting the nested list of extracted frames into 1D list
-        extracted_candidate_frames = functools.reduce(operator.iconcat, extracted_candidate_frames, [])
+        extracted_candidate_frames = functools.reduce(
+            operator.iconcat, extracted_candidate_frames, []
+        )
 
         self._remove_clips(chunked_videos)
         image_selector = ImageSelector(self.n_processes)
@@ -209,9 +215,9 @@ class Video(object):
             print("Running for : ", filepath)
             try:
                 keyframes = self._extract_keyframes_from_video(no_of_frames, filepath)
-                yield {"keyframes": keyframes, "error": None,"filepath": filepath}
+                yield {"keyframes": keyframes, "error": None, "filepath": filepath}
             except Exception as e:
-                yield {"keyframes": [],"error": e,"filepath": filepath}
+                yield {"keyframes": [], "error": e, "filepath": filepath}
 
     @FileDecorators.validate_dir_path
     def extract_keyframes_from_videos_dir(self, no_of_frames, dir_path, writer):
@@ -240,7 +246,9 @@ class Video(object):
                     valid_files.append(filepath)
 
         if len(valid_files) > 0:
-            generator = self._extract_keyframes_for_files_iterator(no_of_frames, valid_files)
+            generator = self._extract_keyframes_for_files_iterator(
+                no_of_frames, valid_files
+            )
 
             for data in generator:
 
@@ -277,7 +285,9 @@ class Video(object):
         # call _extract_keyframes_from_video
         for split_video_file_path in video_splits:
             # print("Processing split : ", split_video_file_path)
-            top_frames_split = self._extract_keyframes_from_video(no_of_frames, split_video_file_path)
+            top_frames_split = self._extract_keyframes_from_video(
+                no_of_frames, split_video_file_path
+            )
             all_top_frames_split.append(top_frames_split)
 
         # collect and merge keyframes to get no_of_frames
@@ -285,7 +295,9 @@ class Video(object):
         image_selector = ImageSelector(self.n_processes)
 
         # list of list to 1d list
-        extracted_candidate_frames = functools.reduce(operator.iconcat, all_top_frames_split, [])
+        extracted_candidate_frames = functools.reduce(
+            operator.iconcat, all_top_frames_split, []
+        )
 
         # top frames
         top_frames = image_selector.select_best_frames(
@@ -313,7 +325,10 @@ class Video(object):
 
         # duration is in seconds
         if video_duration > (config.Video.video_split_threshold_in_minutes * 60):
-            print("Large Video (duration = %s min), will split into smaller videos " % round(video_duration / 60))
+            print(
+                "Large Video (duration = %s min), will split into smaller videos "
+                % round(video_duration / 60)
+            )
             top_frames = self.extract_video_keyframes_big_video(no_of_frames, file_path)
         else:
             top_frames = self._extract_keyframes_from_video(no_of_frames, file_path)
@@ -341,19 +356,24 @@ class Video(object):
         free_space_in_bytes = psutil.virtual_memory().available
 
         # based on config calculate available memory
-        available_memory = config.Video.memory_consumption_threshold * free_space_in_bytes
+        available_memory = (
+            config.Video.memory_consumption_threshold * free_space_in_bytes
+        )
 
         # seconds to reach threshold if all frames are collected, but not all are candidate frames
         # so we can easily multiple this number with a constant
-        no_of_sec_to_reach_threshold = (available_memory / (fps * frame_size_in_bytes)) * config.Video.assumed_no_of_frames_per_candidate_frame
+        no_of_sec_to_reach_threshold = (
+            available_memory / (fps * frame_size_in_bytes)
+        ) * config.Video.assumed_no_of_frames_per_candidate_frame
 
         if break_duration_in_sec > no_of_sec_to_reach_threshold:
             break_duration_in_sec = math.floor(no_of_sec_to_reach_threshold)
 
         # print("Split duration for video (in min) is : ", break_duration_in_sec / 60)
 
-        video_splits = self._split_with_ffmpeg(file_path,
-                                               break_point_duration_in_sec=break_duration_in_sec)
+        video_splits = self._split_with_ffmpeg(
+            file_path, break_point_duration_in_sec=break_duration_in_sec
+        )
 
         corruption_in_chunked_videos = False
         for chunked_video in video_splits:
@@ -361,9 +381,11 @@ class Video(object):
                 corruption_in_chunked_videos = True
 
         if corruption_in_chunked_videos:
-            video_splits = self._split_with_ffmpeg(file_path,
-                                                   override_video_codec=True,
-                                                   break_point_duration_in_sec=break_duration_in_sec)
+            video_splits = self._split_with_ffmpeg(
+                file_path,
+                override_video_codec=True,
+                break_point_duration_in_sec=break_duration_in_sec,
+            )
             for chunked_video in video_splits:
                 if not helper._check_if_valid_video(chunked_video):
                     raise Exception(
@@ -392,7 +414,9 @@ class Video(object):
                 corruption_in_chunked_videos = True
 
         if corruption_in_chunked_videos:
-            chunked_videos = self._split_with_ffmpeg(file_path, override_video_codec=True)
+            chunked_videos = self._split_with_ffmpeg(
+                file_path, override_video_codec=True
+            )
             for chunked_video in chunked_videos:
                 if not helper._check_if_valid_video(chunked_video):
                     raise Exception(
@@ -539,7 +563,9 @@ class Video(object):
         cv2.imwrite(file_full_path, frame)
 
     @FileDecorators.validate_file_path
-    def _split_with_ffmpeg(self, file_path, override_video_codec=False, break_point_duration_in_sec=None):
+    def _split_with_ffmpeg(
+        self, file_path, override_video_codec=False, break_point_duration_in_sec=None
+    ):
         """Function to split the videos and persist the chunks
 
         :param file_path: path of video file
@@ -568,7 +594,7 @@ class Video(object):
         if break_point_duration_in_sec is None:
             clip_start, break_point = (
                 0,
-                duration // cpu_count() if duration // cpu_count() > 15 else 25,
+                duration // mp.cpu_count() if duration // mp.cpu_count() > 15 else 25,
             )
         else:
             clip_start, break_point = (
@@ -588,7 +614,9 @@ class Video(object):
                 clip_end = duration
 
             clipped_files.append(
-                self._write_videofile(file_path, clip_start, clip_end, override_video_codec)
+                self._write_videofile(
+                    file_path, clip_start, clip_end, override_video_codec
+                )
             )
 
             clip_start = clip_end
@@ -653,7 +681,7 @@ class Video(object):
             T1, T2 = [int(1000 * t) for t in [t1, t2]]
             targetname = name + "{0}SUB{1}_{2}.{3}".format(name, T1, T2, ext)
 
-        #timeParamter = "-ss " + "%0.2f" % t1 + " -t " + "%0.2f" % (t2 - t1)
+        # timeParamter = "-ss " + "%0.2f" % t1 + " -t " + "%0.2f" % (t2 - t1)
 
         ssParameter = "-ss " + "%0.2f" % t1
         timeParamter = " -t " + "%0.2f" % (t2 - t1)
@@ -661,7 +689,9 @@ class Video(object):
         if override_video_codec:
             codecParameter = " -vcodec libx264 -max_muxing_queue_size 9999"
         else:
-            codecParameter = " -vcodec copy -avoid_negative_ts 1 -max_muxing_queue_size 9999"
+            codecParameter = (
+                " -vcodec copy -avoid_negative_ts 1 -max_muxing_queue_size 9999"
+            )
 
         # Uses ffmpeg binary for video clipping using ffmpy wrapper
         FFMPEG_BINARY = os.getenv("FFMPEG_BINARY")
