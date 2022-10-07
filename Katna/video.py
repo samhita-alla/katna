@@ -31,6 +31,8 @@ from imageio_ffmpeg import get_ffmpeg_exe
 import functools
 import operator
 
+mp.set_start_method("spawn", force=True)
+
 
 class Video(object):
     """Class for all video frames operations
@@ -62,8 +64,6 @@ class Video(object):
         self.temp_folder = os.path.abspath(os.path.join("clipped"))
         if not os.path.isdir(self.temp_folder):
             os.mkdir(self.temp_folder)
-
-        mp.set_start_method("spawn")
 
     def _remove_clips(self, video_clips):
         """Remove video clips from the temp directory given list of video clips
